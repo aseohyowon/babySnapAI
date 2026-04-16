@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:flutter/foundation.dart';
 
 import '../../core/constants/app_constants.dart';
@@ -113,7 +115,7 @@ class GalleryViewModel extends ChangeNotifier {
         DateTime.now().difference(_lastScanAt!).inHours >=
             AppConstants.autoScanStaleHours;
     if (needsScan) {
-      await scanGallery(forceRescan: false);
+      unawaited(scanGallery(forceRescan: false, startupFastScan: true));
     }
   }
 
@@ -249,7 +251,10 @@ class GalleryViewModel extends ChangeNotifier {
 
   bool isFavorite(String assetId) => _favoriteAssetIds.contains(assetId);
 
-  Future<void> scanGallery({bool forceRescan = false}) async {
+  Future<void> scanGallery({
+    bool forceRescan = false,
+    bool startupFastScan = false,
+  }) async {
     _isScanning = true;
     _errorMessage = null;
     _progress = const GalleryScanProgress(
@@ -262,6 +267,7 @@ class GalleryViewModel extends ChangeNotifier {
     try {
       _images = await _getImagesWithFacesUseCase.execute(
         forceRescan: forceRescan,
+        startupFastScan: startupFastScan,
         onProgress: (progress) {
           _progress = progress;
           _notifySafely();

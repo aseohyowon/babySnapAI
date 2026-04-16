@@ -23,11 +23,13 @@ class GetImagesWithFacesUseCase {
     required void Function(GalleryScanProgress progress) onProgress,
     void Function(List<GalleryImage> partial)? onBabyFound,
     bool forceRescan = false,
+    bool startupFastScan = false,
   }) {
     return _repository.scanBabyImages(
       onProgress: onProgress,
       onBabyFound: onBabyFound,
       forceRescan: forceRescan,
+      startupFastScan: startupFastScan,
     );
   }
 

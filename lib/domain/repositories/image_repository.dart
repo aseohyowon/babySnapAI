@@ -12,6 +12,7 @@ abstract class ImageRepository {
     required void Function(GalleryScanProgress progress) onProgress,
     void Function(List<GalleryImage> partial)? onBabyFound,
     bool forceRescan,
+    bool startupFastScan,
   });
 
   Future<void> excludeAsset(String assetId);

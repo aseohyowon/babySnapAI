@@ -1,3 +1,5 @@
+import 'dart:io';
+
 import 'package:photo_manager/photo_manager.dart';
 
 import '../../core/services/gallery_access_service.dart';
@@ -20,10 +22,10 @@ class DeviceGalleryDataSource {
     // Resolving AssetEntity → File is an async OS call per asset.
     // Do it in parallel batches of 20 to eliminate the sequential I/O stall
     // that was the primary bottleneck for large galleries.
-    const _fileBatchSize = 20;
+    const fileBatchSize = 20;
     final results = <GalleryAssetModel>[];
-    for (var i = 0; i < assets.length; i += _fileBatchSize) {
-      final end = (i + _fileBatchSize).clamp(0, assets.length);
+    for (var i = 0; i < assets.length; i += fileBatchSize) {
+      final end = (i + fileBatchSize).clamp(0, assets.length);
       final batch = assets.sublist(i, end);
       final resolved = await Future.wait(batch.map(_resolveAsset));
       for (final model in resolved) {
@@ -54,8 +56,14 @@ class DeviceGalleryDataSource {
   /// ([relativePath] and [title]).  
   ///
   /// Use [resolveMetaToModel] to get the actual file path for a specific asset.
-  Future<List<GalleryAssetMeta>> fetchAssetsMetaFiltered() async {
-    final assets = await _galleryAccessService.fetchImageAssets();
+  Future<List<GalleryAssetMeta>> fetchAssetsMetaFiltered({
+    int? limit,
+    DateTime? newerThan,
+  }) async {
+    final assets = await _galleryAccessService.fetchImageAssets(
+      limit: limit,
+      newerThan: newerThan,
+    );
     if (assets.isEmpty) return const [];
 
     final metas = <GalleryAssetMeta>[];
@@ -101,6 +109,43 @@ class DeviceGalleryDataSource {
       createdAt: meta.createdAt,
       modifiedAt: meta.modifiedAt,
     );
+  }
+
+  /// Returns a temporary [File] containing a JPEG thumbnail of the asset at
+  /// the given [size] (pixels on the longest side). The caller is responsible
+  /// for deleting the file when done.
+  ///
+  /// Using a small thumbnail instead of the full-resolution file drastically
+  /// reduces the iOS IOSurface allocation that ML Kit triggers via
+  /// [InputImage.fromFile], cutting per-image memory from ~22 MB to ~1 MB.
+  /// Returns a path to a SINGLE shared temp file (reused each call).
+  /// Safe because images are processed sequentially (workerCount = 1).
+  /// Maximum disk usage: ONE thumbnail file (~50-100 KB) at any time.
+  Future<File?> getThumbnailTempFile(
+    GalleryAssetMeta meta, {
+    int size = 512,
+  }) async {
+    try {
+      final bytes = await meta.entity.thumbnailDataWithSize(
+        ThumbnailSize(size, size),
+        quality: 70,
+      );
+      if (bytes == null || bytes.isEmpty) {
+        // ignore: avoid_print
+        print('[THUMB] null/empty bytes for ${meta.id}');
+        return null;
+      }
+      // Use a single fixed file name — overwritten for each image.
+      // This prevents temp files from accumulating on the device.
+      final tempPath = '${Directory.systemTemp.path}/babyscan_thumb.jpg';
+      final tempFile = File(tempPath);
+      await tempFile.writeAsBytes(bytes, flush: true);
+      return tempFile;
+    } catch (e, st) {
+      // ignore: avoid_print
+      print('[THUMB] ERROR for ${meta.id}: $e\n$st');
+      return null;
+    }
   }
 
   bool _isLikelyScreenshotPath(String path) {

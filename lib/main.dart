@@ -11,12 +11,16 @@ import 'presentation/screens/home_screen.dart';
 import 'presentation/screens/onboarding_screen.dart';
 import 'presentation/screens/splash_screen.dart';
 
+const bool kEnableAds = bool.fromEnvironment('ENABLE_ADS', defaultValue: false);
+
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
   await AppLocaleNotifier.instance.init();
   await ServiceLocator.initialize();
-  await MobileAds.instance.initialize();
-  AdService.instance.loadInterstitial();
+  if (kEnableAds) {
+    await MobileAds.instance.initialize();
+    AdService.instance.loadInterstitial();
+  }
   runApp(const MyApp());
 }
 

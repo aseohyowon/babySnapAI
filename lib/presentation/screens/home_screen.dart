@@ -187,7 +187,7 @@ class _HomeScreenState extends State<HomeScreen> {
                     child: ElevatedButton.icon(
                       onPressed: _viewModel.isScanning
                           ? null
-                          : () => _viewModel.scanGallery(forceRescan: true),
+                          : () => _viewModel.scanGallery(forceRescan: false),
                       icon: _viewModel.isScanning
                           ? SizedBox(
                               width: 20,

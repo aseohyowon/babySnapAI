@@ -9,6 +9,7 @@ class CachedScanRecordModel {
     required this.hasFace,
     required this.isBaby,
     required this.faceCount,
+    this.quickScanned = false,
     this.faceVector,
   });
 
@@ -19,6 +20,7 @@ class CachedScanRecordModel {
   final bool hasFace;
   final bool isBaby;
   final int faceCount;
+  final bool quickScanned;
   final List<double>? faceVector;
 
   factory CachedScanRecordModel.fromJson(Map<String, dynamic> json) {
@@ -30,6 +32,7 @@ class CachedScanRecordModel {
       hasFace: json['hasFace'] as bool,
       isBaby: json['isBaby'] as bool,
       faceCount: json['faceCount'] as int,
+      quickScanned: (json['quickScanned'] as bool?) ?? false,
       faceVector: json.containsKey('faceVector')
           ? (json['faceVector'] as List<dynamic>)
               .map((e) => (e as num).toDouble())
@@ -47,6 +50,7 @@ class CachedScanRecordModel {
       'hasFace': hasFace,
       'isBaby': isBaby,
       'faceCount': faceCount,
+      'quickScanned': quickScanned,
       if (faceVector != null && faceVector!.isNotEmpty) 'faceVector': faceVector,
     };
   }
@@ -58,6 +62,7 @@ class CachedScanRecordModel {
     bool? hasFace,
     bool? isBaby,
     int? faceCount,
+    bool? quickScanned,
     List<double>? faceVector,
   }) {
     return CachedScanRecordModel(
@@ -68,6 +73,7 @@ class CachedScanRecordModel {
       hasFace: hasFace ?? this.hasFace,
       isBaby: isBaby ?? this.isBaby,
       faceCount: faceCount ?? this.faceCount,
+      quickScanned: quickScanned ?? this.quickScanned,
       faceVector: faceVector ?? this.faceVector,
     );
   }

@@ -1,91 +1,205 @@
 import 'dart:convert';
 
-import 'package:flutter/foundation.dart';
-import 'package:shared_preferences/shared_preferences.dart';
+import 'package:path/path.dart' as p;
+import 'package:sqflite/sqflite.dart';
 
-import '../constants/app_constants.dart';
 import '../../data/models/cached_scan_record_model.dart';
+import '../constants/app_constants.dart';
 
 class GalleryCacheService {
-  Future<List<CachedScanRecordModel>> loadRecords() async {
-    final preferences = await SharedPreferences.getInstance();
-    final raw = preferences.getString(AppConstants.scanCacheKey);
-    if (raw == null || raw.isEmpty) {
-      return <CachedScanRecordModel>[];
-    }
+  static const _dbName = 'babysnap_cache.db';
+  static const _dbVersion = 2;
 
-    final decoded = await compute(_decodeRecords, raw);
-    return decoded
-        .map((item) => CachedScanRecordModel.fromJson(item))
-        .toList(growable: false);
+  Database? _db;
+
+  Future<Database> _database() async {
+    if (_db != null) return _db!;
+    final dbPath = await getDatabasesPath();
+    final path = p.join(dbPath, _dbName);
+    _db = await openDatabase(
+      path,
+      version: _dbVersion,
+      onCreate: (db, version) async {
+        await db.execute('''
+          CREATE TABLE scan_records (
+            asset_id TEXT PRIMARY KEY,
+            path TEXT NOT NULL,
+            created_at INTEGER NOT NULL,
+            modified_at INTEGER NOT NULL,
+            has_face INTEGER NOT NULL,
+            is_baby INTEGER NOT NULL,
+            face_count INTEGER NOT NULL,
+            quick_scanned INTEGER NOT NULL DEFAULT 0,
+            face_vector TEXT
+          )
+        ''');
+        await db.execute('''
+          CREATE TABLE settings (
+            key TEXT PRIMARY KEY,
+            value TEXT
+          )
+        ''');
+        await db.execute('''
+          CREATE TABLE excluded_asset_ids (
+            asset_id TEXT PRIMARY KEY
+          )
+        ''');
+        await db.execute(
+          'CREATE INDEX idx_scan_records_created_at ON scan_records(created_at DESC)',
+        );
+      },
+      onUpgrade: (db, oldVersion, newVersion) async {
+        if (oldVersion < 2) {
+          await db.execute(
+            'ALTER TABLE scan_records ADD COLUMN quick_scanned INTEGER NOT NULL DEFAULT 0',
+          );
+        }
+      },
+    );
+    return _db!;
+  }
+
+  Future<List<CachedScanRecordModel>> loadRecords() async {
+    final db = await _database();
+    final rows = await db.query('scan_records', orderBy: 'created_at DESC');
+    return rows.map(_mapRowToRecord).toList(growable: false);
   }
 
   Future<void> saveRecords(List<CachedScanRecordModel> records) async {
-    final preferences = await SharedPreferences.getInstance();
-    final raw = await compute(
-      _encodeRecords,
-      records.map((record) => record.toJson()).toList(growable: false),
-    );
+    if (records.isEmpty) {
+      await _saveLastScanAt(DateTime.now());
+      return;
+    }
 
-    await preferences.setString(AppConstants.scanCacheKey, raw);
-    await preferences.setInt(
-      AppConstants.lastScanAtKey,
-      DateTime.now().millisecondsSinceEpoch,
-    );
+    final db = await _database();
+    await db.transaction((txn) async {
+      final batch = txn.batch();
+      for (final record in records) {
+        batch.insert(
+          'scan_records',
+          {
+            'asset_id': record.assetId,
+            'path': record.path,
+            'created_at': record.createdAt.millisecondsSinceEpoch,
+            'modified_at': record.modifiedAt.millisecondsSinceEpoch,
+            'has_face': record.hasFace ? 1 : 0,
+            'is_baby': record.isBaby ? 1 : 0,
+            'face_count': record.faceCount,
+            'quick_scanned': record.quickScanned ? 1 : 0,
+            'face_vector': record.faceVector == null
+                ? null
+                : jsonEncode(record.faceVector),
+          },
+          conflictAlgorithm: ConflictAlgorithm.replace,
+        );
+      }
+      await batch.commit(noResult: true);
+    });
+    await _saveLastScanAt(DateTime.now());
   }
 
   Future<DateTime?> loadLastScanAt() async {
-    final preferences = await SharedPreferences.getInstance();
-    final value = preferences.getInt(AppConstants.lastScanAtKey);
-    if (value == null) {
-      return null;
-    }
-
-    return DateTime.fromMillisecondsSinceEpoch(value);
+    final db = await _database();
+    final rows = await db.query(
+      'settings',
+      columns: ['value'],
+      where: 'key = ?',
+      whereArgs: [AppConstants.lastScanAtKey],
+      limit: 1,
+    );
+    if (rows.isEmpty) return null;
+    final raw = rows.first['value'] as String?;
+    if (raw == null || raw.isEmpty) return null;
+    final millis = int.tryParse(raw);
+    if (millis == null) return null;
+    return DateTime.fromMillisecondsSinceEpoch(millis);
   }
 
   Future<Set<String>> loadExcludedAssetIds() async {
-    final preferences = await SharedPreferences.getInstance();
-    final values =
-        preferences.getStringList(AppConstants.excludedAssetIdsKey) ?? <String>[];
-    return values.toSet();
+    final db = await _database();
+    final rows = await db.query('excluded_asset_ids', columns: ['asset_id']);
+    return rows.map((row) => row['asset_id'] as String).toSet();
   }
 
   Future<void> saveExcludedAssetIds(Set<String> assetIds) async {
-    final preferences = await SharedPreferences.getInstance();
-    await preferences.setStringList(
-      AppConstants.excludedAssetIdsKey,
-      assetIds.toList(growable: false),
+    final db = await _database();
+    await db.transaction((txn) async {
+      await txn.delete('excluded_asset_ids');
+      if (assetIds.isEmpty) return;
+      final batch = txn.batch();
+      for (final assetId in assetIds) {
+        batch.insert('excluded_asset_ids', {'asset_id': assetId});
+      }
+      await batch.commit(noResult: true);
+    });
+  }
+
+  Future<int> loadFilterVersion() async {
+    final db = await _database();
+    final rows = await db.query(
+      'settings',
+      columns: ['value'],
+      where: 'key = ?',
+      whereArgs: [AppConstants.cacheFilterVersionKey],
+      limit: 1,
+    );
+    if (rows.isEmpty) return -1;
+    final raw = rows.first['value'] as String?;
+    return int.tryParse(raw ?? '') ?? -1;
+  }
+
+  Future<void> saveFilterVersion() async {
+    final db = await _database();
+    await db.insert(
+      'settings',
+      {
+        'key': AppConstants.cacheFilterVersionKey,
+        'value': AppConstants.cacheFilterVersion.toString(),
+      },
+      conflictAlgorithm: ConflictAlgorithm.replace,
     );
   }
 
-  /// Returns the filter version that was used for the current cache.
-  /// Returns -1 if never saved (cache is stale/legacy).
-  Future<int> loadFilterVersion() async {
-    final preferences = await SharedPreferences.getInstance();
-    return preferences.getInt(AppConstants.cacheFilterVersionKey) ?? -1;
-  }
-
-  /// Saves the current filter version alongside the scan cache.
-  Future<void> saveFilterVersion() async {
-    final preferences = await SharedPreferences.getInstance();
-    await preferences.setInt(
-        AppConstants.cacheFilterVersionKey, AppConstants.cacheFilterVersion);
-  }
-
-  /// Clears the scan cache records so the next scan starts fresh.
   Future<void> clearRecords() async {
-    final preferences = await SharedPreferences.getInstance();
-    await preferences.remove(AppConstants.scanCacheKey);
-    await preferences.remove(AppConstants.lastScanAtKey);
+    final db = await _database();
+    await db.delete('scan_records');
+    await db.delete(
+      'settings',
+      where: 'key IN (?, ?)',
+      whereArgs: [AppConstants.lastScanAtKey, AppConstants.cacheFilterVersionKey],
+    );
   }
-}
 
-List<Map<String, dynamic>> _decodeRecords(String raw) {
-  final decoded = jsonDecode(raw) as List<dynamic>;
-  return decoded.cast<Map<String, dynamic>>();
-}
+  Future<void> _saveLastScanAt(DateTime at) async {
+    final db = await _database();
+    await db.insert(
+      'settings',
+      {
+        'key': AppConstants.lastScanAtKey,
+        'value': at.millisecondsSinceEpoch.toString(),
+      },
+      conflictAlgorithm: ConflictAlgorithm.replace,
+    );
+  }
 
-String _encodeRecords(List<Map<String, dynamic>> records) {
-  return jsonEncode(records);
+  CachedScanRecordModel _mapRowToRecord(Map<String, Object?> row) {
+    final vectorRaw = row['face_vector'] as String?;
+    final vector = (vectorRaw == null || vectorRaw.isEmpty)
+        ? null
+        : (jsonDecode(vectorRaw) as List<dynamic>)
+            .map((e) => (e as num).toDouble())
+            .toList(growable: false);
+
+    return CachedScanRecordModel(
+      assetId: row['asset_id'] as String,
+      path: row['path'] as String,
+      createdAt: DateTime.fromMillisecondsSinceEpoch(row['created_at'] as int),
+      modifiedAt: DateTime.fromMillisecondsSinceEpoch(row['modified_at'] as int),
+      hasFace: (row['has_face'] as int) == 1,
+      isBaby: (row['is_baby'] as int) == 1,
+      faceCount: row['face_count'] as int,
+      quickScanned: ((row['quick_scanned'] as int?) ?? 0) == 1,
+      faceVector: vector,
+    );
+  }
 }
