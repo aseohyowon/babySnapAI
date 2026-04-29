@@ -3,8 +3,8 @@ import 'package:google_mobile_ads/google_mobile_ads.dart';
 
 /// Centralised AdMob manager for BabySnap AI.
 ///
-/// Banner   → ca-app-pub-6516622519474642/7047002144
-/// Interstitial → ca-app-pub-6516622519474642/4420838808
+/// Banner   → ca-app-pub-6516622519474642/4010261332 (iOS)
+/// Interstitial → ca-app-pub-6516622519474642/7877443445 (iOS)
 ///
 /// Policy compliance:
 ///  • Interstitial is only shown on explicit user-initiated navigation
@@ -16,9 +16,9 @@ class AdService {
   static final AdService instance = AdService._();
 
   static const _bannerUnitId =
-      'ca-app-pub-6516622519474642/7047002144';
+      'ca-app-pub-6516622519474642/4010261332';
   static const _interstitialUnitId =
-      'ca-app-pub-6516622519474642/4420838808';
+      'ca-app-pub-6516622519474642/7877443445';
 
   // Show interstitial once every N eligible triggers.
   static const _interstitialInterval = 2;
